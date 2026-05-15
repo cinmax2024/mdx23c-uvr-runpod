@@ -2,7 +2,7 @@ FROM runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04
 
 # Cache buster — bump this number to force a clean rebuild when RunPod's BuildKit
 # cache gets corrupted (recurring "FailedPrecondition: unexpected commit digest" issue)
-ARG CACHE_BUST=1
+ARG CACHE_BUST=2
 ENV CACHE_BUST=${CACHE_BUST}
 
 RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
