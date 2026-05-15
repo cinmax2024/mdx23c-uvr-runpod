@@ -1,6 +1,6 @@
 FROM runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04
 
-ARG CACHE_BUST=4
+ARG CACHE_BUST=5
 ENV CACHE_BUST=${CACHE_BUST}
 
 RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
