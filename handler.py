@@ -19,7 +19,6 @@ SEP.load_model(model_filename="MDX23C-8KFFT-InstVoc_HQ.ckpt")
 SER_PIPE = _hf_pipeline(
     "audio-classification",
     model="superb/wav2vec2-base-superb-er",
-    top_k=4,
 )
 _SER_LABEL_MAP = {"ang": "ANGRY", "sad": "SAD", "hap": "HAPPY", "neu": "NEUTRAL"}
 
@@ -61,7 +60,7 @@ def _classify_segment_emotions(vocals_wav_path, segments):
             snippet = y[a:b]
             if len(snippet) < int(sr * 0.4):
                 continue
-            preds = SER_PIPE({"raw": snippet, "sampling_rate": sr})
+           preds = SER_PIPE({"raw": snippet, "sampling_rate": sr}, top_k=4)
             top = preds[0]
             out.append({
                 "index": idx,
