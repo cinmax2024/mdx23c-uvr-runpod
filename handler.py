@@ -5,7 +5,6 @@ from audio_separator.separator import Separator
 OUT_DIR = "/tmp/uvr_out"
 os.makedirs(OUT_DIR, exist_ok=True)
 
-# Construct WITH output_dir BEFORE load_model so model_instance freezes the right path
 SEP = Separator(
     model_file_dir="/models",
     output_dir=OUT_DIR,
@@ -23,7 +22,6 @@ def _detect_sample_rate(path):
 
 
 def _resolve(path_or_basename):
-    """Stems may be absolute paths OR basenames depending on audio-separator version."""
     if os.path.isabs(path_or_basename) and os.path.exists(path_or_basename):
         return path_or_basename
     candidate = os.path.join(OUT_DIR, os.path.basename(path_or_basename))
@@ -46,42 +44,51 @@ def handler(event):
         stems = SEP.separate(in_path)
 
         instr_path = None
+        vocals_path = None
         for s in stems:
             bn = os.path.basename(s).lower()
+            p = _resolve(s)
+            if not p:
+                continue
             if "instrument" in bn or "_inst" in bn:
-                instr_path = _resolve(s)
-                if instr_path:
-                    break
+                instr_path = p
+            elif "vocal" in bn:
+                vocals_path = p
 
         if not instr_path:
-            # Self-diagnostic dump so we never need another build to debug paths
             return {
                 "ok": False,
                 "error": "instrumental file not found on disk",
                 "stems_returned": stems,
                 "out_dir_listing": sorted(os.listdir(OUT_DIR))[:30],
-                "cwd_listing": sorted(os.listdir(os.getcwd()))[:30],
-                "out_dir": OUT_DIR,
             }
 
         with open(instr_path, "rb") as f:
-            data = f.read()
+            instr_bytes = f.read()
         sr = _detect_sample_rate(instr_path)
 
-        # Cleanup all files for this request
-        for p in [in_path] + [_resolve(s) for s in stems]:
+        vocals_b64 = None
+        if vocals_path:
+            with open(vocals_path, "rb") as f:
+                vocals_b64 = base64.b64encode(f.read()).decode("ascii")
+
+        # Cleanup
+        for p in [in_path, instr_path, vocals_path]:
             if p and os.path.exists(p):
                 try:
                     os.remove(p)
                 except OSError:
                     pass
 
-        return {
+        result = {
             "ok": True,
-            "instrumental_b64": base64.b64encode(data).decode("ascii"),
+            "instrumental_b64": base64.b64encode(instr_bytes).decode("ascii"),
             "format": "flac",
             "sample_rate": sr,
         }
+        if vocals_b64:
+            result["vocals_b64"] = vocals_b64
+        return result
     except Exception as e:
         return {
             "ok": False,
