@@ -1,6 +1,6 @@
 FROM runpod/pytorch:2.2.0-py3.10-cuda12.1.1-devel-ubuntu22.04
 
-ARG CACHE_BUST=7
+ARG CACHE_BUST=8
 
 # Real filesystem layer that depends on CACHE_BUST — guarantees all layers
 # below get rebuilt with new content hashes when CACHE_BUST changes.
