@@ -1,13 +1,12 @@
 import base64, os, traceback, uuid
 import runpod
 from audio_separator.separator import Separator
-from transformers import pipeline as _hf_pipeline
 import librosa
 
 OUT_DIR = "/tmp/uvr_out"
 os.makedirs(OUT_DIR, exist_ok=True)
 
-# UVR (vocal separation)
+# UVR (loads at module import — proven to work)
 SEP = Separator(
     model_file_dir="/models",
     output_dir=OUT_DIR,
@@ -15,12 +14,21 @@ SEP = Separator(
 )
 SEP.load_model(model_filename="MDX23C-8KFFT-InstVoc_HQ.ckpt")
 
-# SER (speech emotion recognition)
-SER_PIPE = _hf_pipeline(
-    "audio-classification",
-    model="superb/wav2vec2-base-superb-er",
-)
+# SER — lazy-loaded on first use to avoid crashing the container at startup
+# if the HuggingFace download has any hiccup. First request pays the ~15s tax.
+_SER_PIPE = None
 _SER_LABEL_MAP = {"ang": "ANGRY", "sad": "SAD", "hap": "HAPPY", "neu": "NEUTRAL"}
+
+
+def _get_ser_pipe():
+    global _SER_PIPE
+    if _SER_PIPE is None:
+        from transformers import pipeline as _hf_pipeline
+        _SER_PIPE = _hf_pipeline(
+            "audio-classification",
+            model="superb/wav2vec2-base-superb-er",
+        )
+    return _SER_PIPE
 
 
 def _detect_sample_rate(path):
@@ -39,10 +47,12 @@ def _resolve(path_or_basename):
 
 
 def _classify_segment_emotions(vocals_wav_path, segments):
-    """For each segment, slice the clean vocals and run SER. Returns list of
-    {index, emotion, confidence, scores}. Skips segments shorter than 400ms."""
     if not segments or not vocals_wav_path or not os.path.exists(vocals_wav_path):
         return []
+    try:
+        ser = _get_ser_pipe()
+    except Exception as e:
+        return [{"index": -1, "error": f"SER load failed: {type(e).__name__}: {e}"}]
     try:
         y, sr = librosa.load(vocals_wav_path, sr=16000, mono=True)
     except Exception:
@@ -60,7 +70,7 @@ def _classify_segment_emotions(vocals_wav_path, segments):
             snippet = y[a:b]
             if len(snippet) < int(sr * 0.4):
                 continue
-           preds = SER_PIPE({"raw": snippet, "sampling_rate": sr}, top_k=4)
+            preds = ser({"raw": snippet, "sampling_rate": sr}, top_k=4)
             top = preds[0]
             out.append({
                 "index": idx,
@@ -80,7 +90,7 @@ def handler(event):
         if not audio_b64:
             return {"ok": False, "error": "missing input.audio_b64"}
         fmt = (inp.get("audio_format") or "flac").lower()
-        seg_input = inp.get("segments")  # optional list of {index, start_ms, end_ms}
+        seg_input = inp.get("segments")
 
         rid = uuid.uuid4().hex[:10]
         in_path = os.path.join(OUT_DIR, f"req_{rid}.{fmt}")
@@ -118,12 +128,10 @@ def handler(event):
             with open(vocals_path, "rb") as f:
                 vocals_b64 = base64.b64encode(f.read()).decode("ascii")
 
-        # SER on the clean vocals stem
         emotions = []
         if seg_input and vocals_path:
             emotions = _classify_segment_emotions(vocals_path, seg_input)
 
-        # Cleanup
         for p in [in_path, instr_path, vocals_path]:
             if p and os.path.exists(p):
                 try:
