@@ -3,7 +3,7 @@ import runpod
 from audio_separator.separator import Separator
 
 # Load model once at cold-start (~10-20s, then reused for every request)
-SEP = Separator(model_file_dir="/models", output_dir="/tmp", output_format="FLAC")
+SEP = Separator(model_file_dir="/models", output_format="FLAC")
 SEP.load_model(model_filename="MDX23C-8KFFT-InstVoc_HQ.ckpt")
 
 def _detect_sample_rate(path):
@@ -26,22 +26,24 @@ def handler(event):
             with open(in_path, "wb") as f:
                 f.write(base64.b64decode(audio_b64))
 
+            # Tell separator to write stems INTO our temp dir
+            SEP.output_dir = td
             stems = SEP.separate(in_path)
+
+            # audio-separator returns basenames; resolve against output_dir
+            stem_paths = [s if os.path.isabs(s) else os.path.join(td, s) for s in stems]
             instr = next(
-                (s for s in stems
-                 if "instrument" in s.lower() or "_inst" in s.lower()),
+                (p for p in stem_paths
+                 if "instrument" in os.path.basename(p).lower()
+                 or "_inst" in os.path.basename(p).lower()),
                 None,
             )
-            if not instr:
-                return {"ok": False, "error": f"no instrumental stem in {stems}"}
+            if not instr or not os.path.exists(instr):
+                return {"ok": False, "error": f"no instrumental stem found, got: {stems}"}
 
             with open(instr, "rb") as f:
                 data = f.read()
             sr = _detect_sample_rate(instr)
-
-            for s in stems:
-                try: os.remove(s)
-                except OSError: pass
 
         return {
             "ok": True,
